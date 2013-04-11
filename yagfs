@@ -1,0 +1,129 @@
+#!/usr/bin/env ruby
+# Yet another Git FUSE filesystem
+
+require 'rubygems'
+require 'rfuse'
+require 'rugged'
+
+include Rugged
+include RFuse
+
+class YaGFS < Fuse
+  def initialize git_dir, mountpoint
+    @repo             = Repository.new(git_dir)
+    @transformed_refs = {}
+
+    refs.each do |r|
+      @transformed_refs[transform_ref r] = r
+    end
+
+    super mountpoint, []
+  end
+
+  def revparse name
+    # The name will have dots instead of slashes, so we need to un-transform.
+    return @repo.lookup(name).oid if
+      name =~ /[0-9A-Fa-f]{40}/ && @repo.exists(name)
+    if t = @transformed_refs[name]
+      return Reference.lookup(@repo, t).target
+    end
+    ''
+  end
+
+  def transform_ref r;  r.gsub('/', '.'); end
+  def transformed_refs; refs.map {|x| transform_ref x}; end
+  def refs;             @repo.refs.select {|r| r[0] != '/'}; end
+
+  def dir_stat
+    Stat.directory(0555, :uid => 0, :gid => 0, :size => 1)
+  end
+
+  def blob_stat blob
+    # TODO: fix file mode (executable bit)
+    Stat.file(0444, :uid => 0, :gid => 0, :size => blob.size)
+  end
+
+  def object_stat id
+    return ref_stat if id =~ /^([0-9A-Fa-f]{40})\/([^\/]+)$/ &&
+                       dereference($1, $2)
+    if id =~ /^[0-9A-Fa-f]{40}$/ && @repo.exists(id)
+      object = @repo.lookup id
+      return blob_stat object if object.type == 'blob'
+      return dir_stat
+    end
+  end
+
+  def ref_stat
+    Stat.new(Stat::S_IFLNK, 0777, :uid => 0, :gid => 0, :size => 1)
+  end
+
+  def getattr context, path
+    return dir_stat if path == '/'
+    return dir_stat if path == '/objects'
+    return object_stat(path[9..-1]) if path =~ /^\/objects\//
+    return ref_stat if @transformed_refs[path[1..-1]] ||
+                       path =~ /^\/objects\/([0-9A-Fa-f]{40})\/([^\/]+)$/ &&
+                       dereference($1, $2)
+  end
+
+  def dereference tree_id, entry
+    tree = @repo.lookup tree_id
+    tree = tree.tree if tree.type == 'commit'
+    result = tree.entries.find {|x| x[:name] == entry}
+    return "../" + result[:oid] if result
+  end
+
+  def readlink context, path, size
+    return dereference($1, $2) if path =~ /^\/objects\/([^\/]+)\/(.*)/
+    return "objects/" + revparse(path[1..-1])
+  end
+
+  def readdir context, path, filler, offset, ffi
+    # No /objects/ listing, but we do everything else.
+    return root_listing filler              if path == '/'
+    return nil                              if path == '/objects'
+    return tree_listing path[9..-1], filler if path =~ /^\/objects\//
+    raise "#{path} is not a directory"
+  end
+
+  def open context, path, ffi
+  end
+
+  def read context, path, size, offset, ffi
+    hash = path[9..-1]
+    return @repo.lookup(hash).content[offset..offset + size - 1] if
+      hash =~ /^[0-9A-Fa-f]{40}/ &&
+      @repo.exists(hash)
+  end
+
+  def root_listing filler
+    %w(. .. objects).each do |x|
+      filler.push x, dir_stat, 0
+    end
+
+    @transformed_refs.each_key do |k|
+      filler.push k, ref_stat, 0
+    end
+  end
+
+  def tree_listing id, filler
+    obj = @repo.lookup id
+    obj = obj.tree if obj.type == 'commit'
+    obj.entries.each do |entry|
+      filler.push entry[:name], ref_stat, 0
+    end
+  end
+end
+
+fs = YaGFS.new(*ARGV)
+
+if fs.mounted?
+  Signal.trap('TERM') {fs.exit}
+  Signal.trap('INT')  {fs.exit}
+
+  begin
+    fs.loop
+  ensure
+    fs.unmount if fs.mounted?
+  end
+end
