@@ -15,12 +15,18 @@ result is that you can `cd` into or `cat` any object by referring to it as
     refs.tags.v1.4          -> objects/b1f7421584f25073df12dd414e9b04eb214021ba
     $ cd refs.heads.master
     $ ls
+    message
+    parent-0                -> ../8a81a4a6f781342a221a3397a463fa99d9ca9cb9
+    tree                    -> ../5c62b5aa08f761597c5b88d33e6b14b247acac2d
+    $ cat message
+    Did something really awesome
+    $ cd tree
+    $ ls
     bar                     -> ../5716ca5987cbf97d6bb54920bea6adde242d87e6
     foo                     -> ../257cc5642cb1a054f08cc83f2d943e56fd3ebe99
+    $ cat bar
+    contents of bar
     $
-
-Right now there is no filesystem access to commit metadata such as the message
-or parents.
 
 ## Setup
 

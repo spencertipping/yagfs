@@ -38,9 +38,9 @@ class YaGFS < Fuse
     Stat.directory(0555, :uid => 0, :gid => 0, :size => 1)
   end
 
-  def blob_stat blob
+  def blob_stat data
     # TODO: fix file mode (executable bit)
-    Stat.file(0444, :uid => 0, :gid => 0, :size => blob.size)
+    Stat.file(0444, :uid => 0, :gid => 0, :size => data.size)
   end
 
   def object_stat id
@@ -60,17 +60,30 @@ class YaGFS < Fuse
   def getattr context, path
     return dir_stat if path == '/'
     return dir_stat if path == '/objects'
+
+    return blob_stat(@repo.lookup($1).message) if
+      path =~ /^\/objects\/([0-9A-Fa-f]{40})\/message$/ &&
+      @repo.exists($1) &&
+      @repo.lookup($1).type == 'commit'
+
+    return ref_stat if
+      @transformed_refs[path[1..-1]] ||
+      path =~ /^\/objects\/([0-9A-Fa-f]{40})\/([^\/]+)$/ &&
+      dereference($1, $2)
+
     return object_stat(path[9..-1]) if path =~ /^\/objects\//
-    return ref_stat if @transformed_refs[path[1..-1]] ||
-                       path =~ /^\/objects\/([0-9A-Fa-f]{40})\/([^\/]+)$/ &&
-                       dereference($1, $2)
   end
 
   def dereference tree_id, entry
     tree = @repo.lookup tree_id
-    tree = tree.tree if tree.type == 'commit'
-    result = tree.entries.find {|x| x[:name] == entry}
-    return "../" + result[:oid] if result
+
+    if tree.type == 'commit'
+      return "../#{tree.tree.oid}"             if entry == 'tree'
+      return "../#{tree.parents[$1.to_i].oid}" if entry =~ /^parent-(\d+)$/
+    else
+      result = tree.entries.find {|e| e[:name] == entry}
+      return "../#{result[:oid]}" if result
+    end
   end
 
   def readlink context, path, size
@@ -90,6 +103,12 @@ class YaGFS < Fuse
   end
 
   def read context, path, size, offset, ffi
+    return @repo.lookup($1).message[offset..offset + size - 1] if
+      path =~ /^\/objects\/([0-9A-Fa-f]{40})\/message/ &&
+      @repo.exists($1) &&
+      @repo.lookup($1).type == 'commit'
+
+    # Otherwise assume we have a blob.
     hash = path[9..-1]
     return @repo.lookup(hash).content[offset..offset + size - 1] if
       hash =~ /^[0-9A-Fa-f]{40}/ &&
@@ -108,9 +127,16 @@ class YaGFS < Fuse
 
   def tree_listing id, filler
     obj = @repo.lookup id
-    obj = obj.tree if obj.type == 'commit'
-    obj.entries.each do |entry|
-      filler.push entry[:name], ref_stat, 0
+    if obj.type == 'tree'
+      obj.entries.each do |entry|
+        filler.push entry[:name], ref_stat, 0
+      end
+    elsif obj.type == 'commit'
+      filler.push 'tree', ref_stat, 0
+      filler.push 'message', blob_stat(obj.message), 0
+      obj.parents.each_with_index do |parent, i|
+        filler.push "parent-#{i}", ref_stat, 0
+      end
     end
   end
 end
