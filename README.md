@@ -32,6 +32,6 @@ result is that you can `cd` into or `cat` any object by referring to it as
 
 Ubuntu 12.10:
 
-    # apt-get install ruby ruby-dev
+    # apt-get install ruby ruby-dev libfuse-dev
     # gem install rugged rfuse
     $ ./yagfs /path/to/git/repo /mount/point
