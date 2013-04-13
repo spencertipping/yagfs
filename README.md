@@ -37,7 +37,11 @@ result is that you can `cd` into or `cat` any object by referring to it as
 
 Ubuntu 12.10:
 
-    # apt-add-repository ppa:dennis/devtools
+    # apt-add-repository ppa:dennis/devtools    # this is the simplest way I've
+    # apt-add-repository ppa:dennis/python      # found to get libgit2-dev
     # apt-get install ruby ruby-dev libgit2 libgit2-dev libfuse-dev
     # gem install rugged rfuse
     $ ./yagfs /path/to/git/repo /mount/point
+
+You can use a custom [cd script](https://github.com/spencertipping/cd) to
+automount Git repositories with Yagfs.
