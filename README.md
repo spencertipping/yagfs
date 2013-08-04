@@ -1,5 +1,4 @@
 # yagfs: Yet another Git FUSE filesystem
-
 Yagfs translates Git commits, trees, and blobs into a file system hierarchy.
 Unlike a number of other Git filesystems, yagfs represents all object
 references, including tree children, as symlinks to SHA-identified objects. The
@@ -34,14 +33,15 @@ result is that you can `cd` into or `cat` any object by referring to it as
     $
 
 ## Setup
-
 Ubuntu 13.10:
 
-    # apt-add-repository ppa:dennis/devtools    # this is the simplest way I've
-    # apt-add-repository ppa:dennis/python      # found to get libgit2-dev
-    # apt-get install ruby ruby-dev libgit2 libgit2-dev libfuse-dev
-    # gem install rugged rfuse
-    $ ./yagfs /path/to/git/repo /mount/point
+```sh
+# apt-add-repository ppa:dennis/devtools    # this is the simplest way I've
+# apt-add-repository ppa:dennis/python      # found to get libgit2-dev
+# apt-get install ruby ruby-dev libgit2 libgit2-dev libfuse-dev
+# gem install rugged rfuse
+$ ./yagfs /path/to/git/repo /mount/point
+```
 
 You can use a custom [cd script](https://github.com/spencertipping/cd) to
 automount Git repositories with Yagfs.
