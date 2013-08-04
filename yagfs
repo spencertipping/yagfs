@@ -9,7 +9,7 @@ require 'set'
 include Rugged
 include RFuse
 
-class Commit
+module Keyed
   attr_writer :symref_index
 
   def [] k
@@ -20,9 +20,23 @@ class Commit
   end
 end
 
+class Commit
+  include Keyed
+end
+
+class Tag
+  include Keyed
+
+  alias author tagger
+end
+
 class Repository
   def lookup_commit id, symref_index
     lookup(id).tap {|commit| commit.symref_index = symref_index}
+  end
+
+  def lookup_tag id, symref_index
+    lookup(id).tap {|tag| tag.symref_index = symref_index}
   end
 end
 
@@ -42,19 +56,21 @@ class YaGFS < Fuse
   end
 
   ValidCommitFiles = %w(message name time email id symref)
+  ValidTagFiles    = %w(message name time email id symref)
 
   def revparse name
     # The name will have dots instead of slashes, so we need to un-transform.
+    name = name.name if name.is_a?(Reference)
     return name if name =~ /^[0-9A-Fa-f]{40}$/
 
     t = nil
-    return Reference.lookup(@repo, t).target if t = @transformed_refs[name]
-    return Reference.lookup(@repo, name).target rescue ''
+    return Reference.lookup(@repo, t.name).target if t = @transformed_refs[name]
+    return Reference.lookup(@repo, name).target rescue nil
   end
 
-  def transform_ref r;  r.gsub('/', '.').sub(/^refs\./, ''); end
+  def transform_ref r;  r.name.gsub('/', '.').sub(/^refs\./, ''); end
   def transformed_refs; refs.map {|x| transform_ref x}; end
-  def refs;             @repo.refs.select {|r| r[0] != '/'}; end
+  def refs;             @repo.refs.select {|r| r.name[0] != '/'}; end
 
   def dir_stat
     Stat.directory(0555, :uid => 0, :gid => 0, :size => 1)
@@ -68,9 +84,9 @@ class YaGFS < Fuse
   def object_stat id
     return ref_stat if id =~ /^([0-9A-Fa-f]{40})\/([^\/]+)$/ &&
                        dereference($1, $2)
-    if id =~ /^[0-9A-Fa-f]{40}$/ && @repo.exists(id)
-      object = @repo.lookup id
-      return blob_stat object if object.type == 'blob'
+    if id =~ /^[0-9A-Fa-f]{40}$/
+      return nil unless object = @repo.lookup(id)
+      return blob_stat object if object.type == :blob
       return dir_stat
     end
   end
@@ -83,11 +99,12 @@ class YaGFS < Fuse
     return dir_stat if path == '/'
     return dir_stat if path == '/objects'
 
+    r = nil
     return blob_stat(@repo.lookup_commit($1, @symbolic_refs)[$2.to_sym]) if
       path =~ /^\/objects\/([0-9A-Fa-f]{40})\/(\w+)$/ &&
-      @repo.exists($1) &&
-      @repo.lookup($1).type == 'commit' &&
-      ValidCommitFiles.member?($2)
+      (r = @repo.lookup($1)) &&
+      (r.is_a?(Commit) && ValidCommitFiles.member?($2) ||
+       r.is_a?(Tag)    && ValidTagFiles.member?($2))
 
     return ref_stat if
       @transformed_refs[path[1..-1]] ||
@@ -98,11 +115,13 @@ class YaGFS < Fuse
   end
 
   def dereference tree_id, entry
-    tree = @repo.lookup tree_id
+    tree = tree_id.is_a?(String) ? @repo.lookup(tree_id) : tree_id
 
-    if tree.type == 'commit'
+    if tree.is_a? Commit
       return "../#{tree.tree.oid}"             if entry == 'tree'
       return "../#{tree.parents[$1.to_i].oid}" if entry =~ /^parent-(\d+)$/
+    elsif tree.is_a? Tag
+      return "../#{tree.target.oid}"           if entry == 'commit'
     else
       result = tree.entries.find {|e| e[:name] == entry}
       return "../#{result[:oid]}" if result
@@ -138,14 +157,13 @@ class YaGFS < Fuse
   def data_for path
     return @repo.lookup_commit($1, @symbolic_refs)[$2.to_sym] if
       path =~ /^\/objects\/([0-9A-Fa-f]{40})\/(\w+)$/ &&
-      @repo.exists($1) &&
-      @repo.lookup($1).type == 'commit' &&
-      ValidCommitFiles.member?($2)
+      (r = @repo.lookup($1)) &&
+      (r.is_a?(Commit) && ValidCommitFiles.member?($2) ||
+       r.is_a?(Tag)    && ValidTagFiles.member?($2))
 
     # Otherwise assume we have a blob.
     hash = path[9..-1]
-    return @repo.lookup(hash).content if hash =~ /^[0-9A-Fa-f]{40}/ &&
-                                         @repo.exists(hash)
+    return r.content if hash =~ /^[0-9A-Fa-f]{40}/ && (r = @repo.lookup(hash))
   end
 
   def root_listing filler
@@ -160,11 +178,11 @@ class YaGFS < Fuse
 
   def tree_listing id, filler
     obj = @repo.lookup id
-    if obj.type == 'tree'
+    if obj.is_a? Tree
       obj.entries.each do |entry|
         filler.push entry[:name], ref_stat, 0
       end
-    elsif obj.type == 'commit'
+    elsif obj.is_a? Commit
       filler.push 'tree', ref_stat, 0
       ValidCommitFiles.each do |file|
         filler.push file, blob_stat(obj[file.to_sym]), 0
@@ -173,19 +191,16 @@ class YaGFS < Fuse
       obj.parents.each_with_index do |parent, i|
         filler.push "parent-#{i}", ref_stat, 0
       end
+    elsif obj.is_a? Tag
+      filler.push 'commit', ref_stat, 0
+      ValidTagFiles.each do |file|
+        filler.push file, blob_stat(obj[file.to_sym]), 0
+      end
     end
   end
 
   def commit_listing filler
-    if @known_commit_ids.empty?
-      w = Walker.new(@repo)
-      refs.each {|r| w.push revparse(r)}
-      w.each {|commit| @known_commit_ids << commit.oid}
-    end
-
-    @known_commit_ids.each do |oid|
-      filler.push oid, dir_stat, 0
-    end
+    # TODO: fix this (low priority)
   end
 end
 

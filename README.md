@@ -35,7 +35,7 @@ result is that you can `cd` into or `cat` any object by referring to it as
 
 ## Setup
 
-Ubuntu 12.10:
+Ubuntu 13.10:
 
     # apt-add-repository ppa:dennis/devtools    # this is the simplest way I've
     # apt-add-repository ppa:dennis/python      # found to get libgit2-dev
